@@ -1,107 +1,153 @@
-import csv
-import time
+"""
+온비드 과거 동산 입찰결과 크롤러
+ - 기간: 2015 ~ 2024 (1년 단위)
+ - 컬럼: 일련번호, 카테고리, 물건정보, 최저입찰가, 낙찰가, 낙찰가율, 입찰결과, 개찰일시
+ - 결과: 2015.csv, 2016.csv, … , 2024.csv
+"""
+
+import csv, time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 로그인 정보 (보안상 환경 변수로 관리 권장)
+# ──────────────────────────────────────────────────────────────
+# ① 로그인 정보
 ONBID_ID = "YOUR_ID"
 ONBID_PW = "YOUR_PASS"
 
-# 웹드라이버 설정
+# ② 드라이버 세팅
 options = webdriver.ChromeOptions()
-options.add_argument("--headless")  # 필요하면 주석 처리
+options.add_argument("--headless")          # 디버깅 시 주석 처리
 options.add_argument("--disable-gpu")
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
 
-# 웹드라이버 실행
-service = Service(ChromeDriverManager().install())
-driver = webdriver.Chrome(service=service, options=options)
+driver = webdriver.Chrome(
+    service=Service(ChromeDriverManager().install()),
+    options=options
+)
+wait = WebDriverWait(driver, 10)
 
-def login_onbid():
-    driver.get("https://www.onbid.co.kr/op/mba/loginmn/loginForm.do")  # 로그인 페이지 URL
-    time.sleep(2)
-    
-    # ID 입력
-    id_input = driver.find_element(By.ID, "usrId")
-    id_input.send_keys(ONBID_ID)
-    
-    # PW 입력
-    pw_input = driver.find_element(By.ID, "encpw")
-    pw_input.send_keys(ONBID_PW)
-    pw_input.send_keys(Keys.RETURN)
-    
-    time.sleep(3)  # 로그인 완료 대기
-    print("로그인 완료")
+# ──────────────────────────────────────────────────────────────
+def login_onbid() -> None:
+    """온비드 로그인"""
+    driver.get("https://www.onbid.co.kr/op/mba/loginmn/loginForm.do")
+    wait.until(EC.presence_of_element_located((By.ID, "usrId")))
 
-def scrape_bid_results():
-    driver.get("https://www.onbid.co.kr/op/bda/bidrslt/moveableResultList.do")  # 입찰 결과 페이지 URL
-    time.sleep(3)
-    
-    # CSV 파일 초기화
-    with open('onvid_data.csv', mode='w', newline='', encoding='utf-8') as file:
-        writer = csv.writer(file)
-        # 헤더 작성
-        writer.writerow(['물건정보', '최저입찰가 (예정가격)(원)', '낙찰가(원)', '낙찰가율(%)', '입찰결과', '개찰일시'])
+    driver.find_element(By.ID, "usrId").send_keys(ONBID_ID)
+    pw = driver.find_element(By.ID, "encpw")
+    pw.send_keys(ONBID_PW)
+    pw.send_keys(Keys.RETURN)
 
-        # 페이지 번호 변수 초기화
-        current_page_number = 1
+    # 바로 결과 페이지로 이동해 입력창 등장 여부로 로그인 확인
+    driver.get("https://www.onbid.co.kr/op/bda/bidrslt/moveableResultList.do")
+    try:
+        wait.until(EC.presence_of_element_located((By.ID, "searchBidDateFrom")))
+        print("로그인 및 페이지 로딩 완료")
+    except TimeoutException:
+        print("로그인 확인 타임아웃 → 5초 대기 후 계속 진행")
+        time.sleep(5)
 
-        def fn_paging(page_number):
-            """페이지 번호를 받아서 해당 페이지로 이동하는 함수"""
-            driver.execute_script(f"fn_paging('{page_number}')")
+# ──────────────────────────────────────────────────────────────
+def set_date_range(from_date: str, to_date: str) -> None:
+    """검색 기간(개찰일시) 설정 후 검색"""
+    wait.until(EC.presence_of_element_located((By.ID, "searchBidDateFrom")))
+    from_box = driver.find_element(By.ID, "searchBidDateFrom")
+    to_box   = driver.find_element(By.ID, "searchBidDateTo")
 
-        while True:  # 페이지 이동을 위한 루프
-            rows = driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
-            
-            for row in rows:
-                try:
-                    cols = row.find_elements(By.TAG_NAME, "td")
-                    
-                    # 데이터 개수가 부족하거나, 모든 값이 '정보 없음'인 경우 스킵
-                    if len(cols) < 6:
-                        continue
+    from_box.clear();  from_box.send_keys(from_date)
+    to_box.clear();    to_box.send_keys(to_date)
 
-                    item_info_elem = row.find_elements(By.CSS_SELECTOR, "em.fwb")  # 물건정보
-                    item_info = item_info_elem[0].text.strip() if item_info_elem else "정보 없음"
-                    
-                    # 물건 정보가 '정보 없음'이면 해당 행을 스킵
-                    if item_info == "정보 없음":
-                        continue
+    driver.find_element(By.ID, "searchBtn").click()
+    # 결과 테이블 로딩 대기
+    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
 
-                    min_bid_price = cols[1].text.strip() if len(cols) > 1 else "정보 없음"  # 최저입찰가
-                    final_bid_price = cols[2].text.strip() if len(cols) > 2 else "정보 없음"  # 낙찰가
-                    bid_rate = cols[3].text.strip() if len(cols) > 3 else "정보 없음"  # 낙찰가율
-                    bid_result = cols[4].text.strip() if len(cols) > 4 else "정보 없음"  # 입찰결과
-                    
-                    # 개찰일시에서 "상세보기" 같은 불필요한 데이터 필터링
-                    bid_date = cols[5].text.strip() if len(cols) > 5 and "상세보기" not in cols[5].text else "정보 없음"
+# ──────────────────────────────────────────────────────────────
+def extract_serial(row) -> str:
+    """
+    <dl class="info"> → <dt> → <a> 순으로 일련번호 추출.
+    없으면 '정보 없음' 반환.
+    """
+    a_tags = row.find_elements(By.CSS_SELECTOR, "dl.info dt a")
+    if a_tags and a_tags[0].text.strip():
+        return a_tags[0].text.strip()
+    return "정보 없음"
 
-                    # CSV 파일에 수집된 데이터 저장
-                    writer.writerow([item_info, min_bid_price, final_bid_price, bid_rate, bid_result, bid_date])
+# ──────────────────────────────────────────────────────────────
+def scrape_current_search(writer) -> None:
+    """현재 검색 결과(1년치)에 대해 모든 페이지 순회하며 데이터 저장"""
+    page = 1
+    while True:
+        rows = driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
+        if not rows:
+            break
 
-                except Exception as e:
-                    print("데이터 수집 오류:", e)
+        for row in rows:
+            tds = row.find_elements(By.TAG_NAME, "td")
+            if len(tds) < 6:
+                continue
 
-            # 페이지 번호를 +1 하여 다음 페이지로 이동
-            try:
-                current_page_number += 1  # 페이지 번호 증가
+            serial_num = extract_serial(row)                       # 일련번호
+            cat_elem = row.find_elements(By.CSS_SELECTOR, "p.tpoint_03")
+            category = cat_elem[0].text.strip() if cat_elem else "정보 없음"
 
-                # fn_paging 함수 호출하여 페이지 변경
-                fn_paging(current_page_number)  # 페이지 번호를 함수에 전달하여 페이지 이동
+            item_elem = row.find_elements(By.CSS_SELECTOR, "em.fwb")
+            item_info = item_elem[0].text.strip() if item_elem else "정보 없음"
+            if item_info == "정보 없음":
+                continue  # 공백 행 스킵
 
-                time.sleep(3)  # 페이지 로딩 대기
+            min_bid_price   = tds[1].text.strip()
+            final_bid_price = tds[2].text.strip()
+            bid_rate        = tds[3].text.strip()
+            bid_result      = tds[4].text.strip()
+            bid_date        = (tds[5].text.strip()
+                               if "상세보기" not in tds[5].text else "정보 없음")
 
-            except Exception as e:
-                print("다음 페이지로 이동하는 도중 오류 발생:", e)
-                break  # 오류가 발생하면 종료
+            writer.writerow([
+                serial_num, category, item_info,
+                min_bid_price, final_bid_price,
+                bid_rate, bid_result, bid_date
+            ])
 
+        # ─── 다음 페이지 이동 ───
+        page += 1
+        try:
+            driver.execute_script(f"fn_paging('{page}')")
+            time.sleep(1.5)   # 짧은 로딩 대기
+        except Exception:
+            break             # 마지막 페이지면 빠져나옴
 
-if __name__ == "__main__":
+# ──────────────────────────────────────────────────────────────
+def main(): 
     login_onbid()
-    scrape_bid_results()
+
+    for year in range(2015, 2024): 
+        from_date = f"{year}-01-01"
+        to_date   = f"{year}-12-31"
+        print(f"\n📆 {year}년 ({from_date} ~ {to_date}) 수집 시작")
+
+        set_date_range(from_date, to_date)
+
+        csv_name = f"{year}.csv"
+        with open(csv_name, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "일련번호", "카테고리", "물건정보",
+                "최저입찰가 (예정가격)(원)", "낙찰가(원)",
+                "낙찰가율(%)", "입찰결과", "개찰일시"
+            ])
+            scrape_current_search(writer)
+
+        print(f"✅ {csv_name} 저장 완료")
+
     driver.quit()
+
+# ──────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    main()
+ 
