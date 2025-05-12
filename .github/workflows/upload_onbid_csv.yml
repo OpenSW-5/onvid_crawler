@@ -57,6 +57,10 @@ jobs:
                 FROM {os.environ['SNOWFLAKE_STAGE']}/{file_name}
                 FILE_FORMAT = (FORMAT_NAME = 'korean_csv_format')
             """)
+            
+        print("== ENVIRONMENT DEBUG ==")
+        for key in ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_DATABASE"]:
+          print(key, "=", repr(os.environ.get(key)))
 
         cur.close()
         conn.close()
