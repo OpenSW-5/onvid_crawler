@@ -35,6 +35,12 @@ jobs:
         import os, glob
         import snowflake.connector
 
+        # 디버깅용 환경 변수 출력
+        print("== ENVIRONMENT DEBUG ==")
+        for key in ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_DATABASE", "SNOWFLAKE_SCHEMA", "SNOWFLAKE_WAREHOUSE"]:
+            print(f"{key} =", repr(os.environ.get(key)))
+
+        # 연결
         conn = snowflake.connector.connect(
             user=os.environ['SNOWFLAKE_USER'],
             password=os.environ['SNOWFLAKE_PASSWORD'],
@@ -44,23 +50,22 @@ jobs:
             schema=os.environ['SNOWFLAKE_SCHEMA']
         )
         cur = conn.cursor()
-        files = glob.glob("data/*.csv")
 
+        # CSV 파일 업로드 및 COPY INTO 실행
+        files = glob.glob("data/*.csv")
         for file in files:
             file_path = os.path.abspath(file)
             file_name = os.path.basename(file)
+            print(f"Uploading file: {file_name}")
 
             cur.execute(f"PUT file://{file_path} {os.environ['SNOWFLAKE_STAGE']} OVERWRITE=TRUE")
-
             cur.execute(f"""
                 COPY INTO onbid_results
                 FROM {os.environ['SNOWFLAKE_STAGE']}/{file_name}
                 FILE_FORMAT = (FORMAT_NAME = 'korean_csv_format')
             """)
-            
-        print("== ENVIRONMENT DEBUG ==")
-        for key in ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_DATABASE"]:
-          print(key, "=", repr(os.environ.get(key)))
+
+        print("✅ Upload and COPY INTO completed successfully.")
 
         cur.close()
         conn.close()
