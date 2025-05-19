@@ -1,86 +1,99 @@
 """
-온비드 과거 동산 입찰결과 크롤러
- - 기간: 2015 ~ 2024 (1년 단위)
- - 컬럼: 일련번호, 카테고리, 물건정보, 최저입찰가, 낙찰가, 낙찰가율, 입찰결과, 개찰일시
- - 결과: 2015.csv, 2016.csv, … , 2024.csv
+온비드 동산·기타자산 입찰결과 크롤러  (수동 로그인 → 자동 수집)
+────────────────────────────────────────────────────────────────────
+기간  : 2015 ~ 2024
+컬럼  : 일련번호, 기관/담당부점, 카테고리, 물건정보,
+        최저입찰가, 낙찰가, 낙찰가율, 입찰결과, 개찰일시
+출력  : 2015.csv … 2024.csv
+사용 절차
+  ① 실행 → 브라우저에서 로그인(캡챠 포함)
+  ② 메뉴 ‘동산/기타자산 ▸ 입찰결과’ 진입
+  ③ 터미널에 ENTER → 연도별 자동 수집 시작
+────────────────────────────────────────────────────────────────────
 """
 
 import csv, time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-from webdriver_manager.chrome import ChromeDriverManager
 
-# ──────────────────────────────────────────────────────────────
-# ① 로그인 정보
-ONBID_ID = "YOUR_ID"
-ONBID_PW = "YOUR_PASS"
-
-# ② 드라이버 세팅
+# ─────────── Chrome 옵션 ───────────
 options = webdriver.ChromeOptions()
-options.add_argument("--headless")          # 디버깅 시 주석 처리
+# options.add_argument("--headless")          # ↙ 화면 보면서 디버깅할 때만 주석
 options.add_argument("--disable-gpu")
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
-
-driver = webdriver.Chrome(
-    service=Service(ChromeDriverManager().install()),
-    options=options
+options.add_argument("--disable-popup-blocking")
+options.add_argument("--window-size=1920,1080")
+options.add_argument(
+    "--disable-features=SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure"
 )
-wait = WebDriverWait(driver, 10)
 
-# ──────────────────────────────────────────────────────────────
-def login_onbid() -> None:
-    """온비드 로그인"""
+driver = webdriver.Chrome(options=options)
+wait   = WebDriverWait(driver, 20)
+
+LIST_URL = "https://www.onbid.co.kr/op/bda/bidrslt/moveableResultList.do"
+
+# ─────────── ① 수동 로그인 ───────────
+def manual_login_once() -> None:
     driver.get("https://www.onbid.co.kr/op/mba/loginmn/loginForm.do")
-    wait.until(EC.presence_of_element_located((By.ID, "usrId")))
+    print("\n▶ 브라우저가 열렸습니다!")
+    print("   1) 아이디/비밀번호 + 캡차 입력 → 로그인")
+    print("   2) 상단 ‘동산/기타자산 ▸ 입찰결과’ 접속")
+    input("결과 목록 화면이 뜨면 ENTER ▶ ")
+    driver.get(LIST_URL)          # 혹시 사용자가 다른 페이지에 있으면 강제 이동
 
-    driver.find_element(By.ID, "usrId").send_keys(ONBID_ID)
-    pw = driver.find_element(By.ID, "encpw")
-    pw.send_keys(ONBID_PW)
-    pw.send_keys(Keys.RETURN)
-
-    # 바로 결과 페이지로 이동해 입력창 등장 여부로 로그인 확인
-    driver.get("https://www.onbid.co.kr/op/bda/bidrslt/moveableResultList.do")
-    try:
-        wait.until(EC.presence_of_element_located((By.ID, "searchBidDateFrom")))
-        print("로그인 및 페이지 로딩 완료")
-    except TimeoutException:
-        print("로그인 확인 타임아웃 → 5초 대기 후 계속 진행")
-        time.sleep(5)
-
-# ──────────────────────────────────────────────────────────────
-def set_date_range(from_date: str, to_date: str) -> None:
-    """검색 기간(개찰일시) 설정 후 검색"""
-    wait.until(EC.presence_of_element_located((By.ID, "searchBidDateFrom")))
-    from_box = driver.find_element(By.ID, "searchBidDateFrom")
-    to_box   = driver.find_element(By.ID, "searchBidDateTo")
-
-    from_box.clear();  from_box.send_keys(from_date)
-    to_box.clear();    to_box.send_keys(to_date)
-
+# ─────────── ② 검색 기간 설정 ───────────
+def set_year_range(year: int) -> None:
+    wait.until(EC.element_to_be_clickable((By.ID, "searchBidDateFrom")))
+    driver.find_element(By.ID, "searchBidDateFrom").clear()
+    driver.find_element(By.ID, "searchBidDateFrom").send_keys(f"{year}-01-01")
+    driver.find_element(By.ID, "searchBidDateTo").clear()
+    driver.find_element(By.ID, "searchBidDateTo").send_keys(f"{year}-12-31")
     driver.find_element(By.ID, "searchBtn").click()
-    # 결과 테이블 로딩 대기
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
 
-# ──────────────────────────────────────────────────────────────
-def extract_serial(row) -> str:
-    """
-    <dl class="info"> → <dt> → <a> 순으로 일련번호 추출.
-    없으면 '정보 없음' 반환.
-    """
-    a_tags = row.find_elements(By.CSS_SELECTOR, "dl.info dt a")
-    if a_tags and a_tags[0].text.strip():
-        return a_tags[0].text.strip()
-    return "정보 없음"
+# ─────────── ③ 상세보기 파싱 ───────────
+def grab_org_or_dept(detail_anchor) -> str:
+    """상세보기 <a> 클릭 → 새 탭으로 뜨는 상세 팝업에서 기관/담당부점 추출"""
+    parent = driver.current_window_handle
+    driver.execute_script("arguments[0].click();", detail_anchor)
 
-# ──────────────────────────────────────────────────────────────
-def scrape_current_search(writer) -> None:
-    """현재 검색 결과(1년치)에 대해 모든 페이지 순회하며 데이터 저장"""
+    try:
+        # 새 탭이 열릴 때까지 대기
+        wait.until(lambda d: len(d.window_handles) > 1)
+    except TimeoutException:
+        return "정보 없음"
+
+    driver.switch_to.window(driver.window_handles[-1])
+
+    # about:blank → 실제 URL 로 바뀔 때까지 3초 한도 대기
+    for _ in range(30):
+        if driver.current_url != "about:blank":
+            break
+        time.sleep(0.1)
+
+    try:
+        lbl = wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, "//th[contains(text(),'기관명') or contains(text(),'담당부점')]")
+            )
+        )
+        value = driver.find_element(
+            By.XPATH,
+            "//th[contains(text(),'기관명') or contains(text(),'담당부점')]/following-sibling::td"
+        ).text.strip() or "정보 없음"
+    except Exception:
+        value = "정보 없음"
+
+    driver.close()
+    driver.switch_to.window(parent)
+    return value
+
+# ─────────── ④ 연도별 수집 ───────────
+def crawl_one_year(writer) -> None:
     page = 1
     while True:
         rows = driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
@@ -88,66 +101,62 @@ def scrape_current_search(writer) -> None:
             break
 
         for row in rows:
-            tds = row.find_elements(By.TAG_NAME, "td")
-            if len(tds) < 6:
+            tds        = row.find_elements(By.TAG_NAME, "td")
+            serial_e   = row.find_elements(By.CSS_SELECTOR, "dl.info dt a")
+            item_e     = row.find_elements(By.CSS_SELECTOR, "em.fwb")
+            if not (serial_e and item_e and len(tds) >= 6):
+                continue  # 필수 필드 누락
+
+            serial = serial_e[0].text.strip()
+            item   = item_e[0].text.strip()
+            if not item:
                 continue
 
-            serial_num = extract_serial(row)                       # 일련번호
-            cat_elem = row.find_elements(By.CSS_SELECTOR, "p.tpoint_03")
-            category = cat_elem[0].text.strip() if cat_elem else "정보 없음"
+            category_e = row.find_elements(By.CSS_SELECTOR, "p.tpoint_03")
+            category   = category_e[0].text.strip() if category_e else "정보 없음"
 
-            item_elem = row.find_elements(By.CSS_SELECTOR, "em.fwb")
-            item_info = item_elem[0].text.strip() if item_elem else "정보 없음"
-            if item_info == "정보 없음":
-                continue  # 공백 행 스킵
+            min_price, final_price, bid_rate, bid_result, bid_date = [
+                td.text.strip() for td in tds[1:6]
+            ]
 
-            min_bid_price   = tds[1].text.strip()
-            final_bid_price = tds[2].text.strip()
-            bid_rate        = tds[3].text.strip()
-            bid_result      = tds[4].text.strip()
-            bid_date        = (tds[5].text.strip()
-                               if "상세보기" not in tds[5].text else "정보 없음")
+            # 상세보기 <a> (onclick: fn_openDetailView)
+            detail_a = row.find_element(By.CSS_SELECTOR, "a[onclick*='fn_openDetailView']")
+            org_dept = grab_org_or_dept(detail_a)
 
             writer.writerow([
-                serial_num, category, item_info,
-                min_bid_price, final_bid_price,
-                bid_rate, bid_result, bid_date
+                serial, org_dept, category, item,
+                min_price, final_price, bid_rate, bid_result, bid_date
             ])
 
-        # ─── 다음 페이지 이동 ───
+        # ─ 페이지 넘기기 (사이트 내 JS 함수 호출)
         page += 1
         try:
             driver.execute_script(f"fn_paging('{page}')")
-            time.sleep(1.5)   # 짧은 로딩 대기
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
         except Exception:
-            break             # 마지막 페이지면 빠져나옴
+            break
 
-# ──────────────────────────────────────────────────────────────
-def main(): 
-    login_onbid()
+# ─────────── ⑤ 메인 루틴 ───────────
+def main():
+    manual_login_once()
 
-    for year in range(2015, 2024): 
-        from_date = f"{year}-01-01"
-        to_date   = f"{year}-12-31"
-        print(f"\n📆 {year}년 ({from_date} ~ {to_date}) 수집 시작")
+    for year in range(2015, 2025):     # 2024 포함
+        print(f"\n📆 {year}년 데이터 수집 중 …")
+        set_year_range(year)
 
-        set_date_range(from_date, to_date)
-
-        csv_name = f"{year}.csv"
-        with open(csv_name, "w", newline="", encoding="utf-8") as f:
+        with open(f"{year}.csv", "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow([
-                "일련번호", "카테고리", "물건정보",
-                "최저입찰가 (예정가격)(원)", "낙찰가(원)",
-                "낙찰가율(%)", "입찰결과", "개찰일시"
+                "일련번호", "기관/담당부점", "카테고리", "물건정보",
+                "최저입찰가(원)", "낙찰가(원)", "낙찰가율(%)",
+                "입찰결과", "개찰일시"
             ])
-            scrape_current_search(writer)
+            crawl_one_year(writer)
 
-        print(f"✅ {csv_name} 저장 완료")
+        print(f"✅ {year}.csv 저장 완료")
 
     driver.quit()
 
-# ──────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     main()
- 
