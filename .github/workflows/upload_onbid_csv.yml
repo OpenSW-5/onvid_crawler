@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v3
 
     - name: Set up Python
@@ -18,10 +18,10 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: Install Snowflake Connector
+    - name: Install dependencies
       run: pip install snowflake-connector-python
 
-    - name: Upload to Snowflake
+    - name: Upload CSV to Snowflake
       env:
         SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
         SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
@@ -32,41 +32,41 @@ jobs:
         SNOWFLAKE_STAGE: ${{ secrets.SNOWFLAKE_STAGE }}
       run: |
         python <<EOF
-        import os, glob
-        import snowflake.connector
+import os, glob
+import snowflake.connector
 
-        # 디버깅용 환경 변수 출력
-        print("== ENVIRONMENT DEBUG ==")
-        for key in ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_DATABASE", "SNOWFLAKE_SCHEMA", "SNOWFLAKE_WAREHOUSE"]:
-            print(f"{key} =", repr(os.environ.get(key)))
+# 연결
+conn = snowflake.connector.connect(
+    user=os.environ['SNOWFLAKE_USER'],
+    password=os.environ['SNOWFLAKE_PASSWORD'],
+    account=os.environ['SNOWFLAKE_ACCOUNT'],
+    warehouse=os.environ['SNOWFLAKE_WAREHOUSE'],
+    database=os.environ['SNOWFLAKE_DATABASE'],
+    schema=os.environ['SNOWFLAKE_SCHEMA']
+)
+cur = conn.cursor()
 
-        # 연결
-        conn = snowflake.connector.connect(
-            user=os.environ['SNOWFLAKE_USER'],
-            password=os.environ['SNOWFLAKE_PASSWORD'],
-            account=os.environ['SNOWFLAKE_ACCOUNT'],
-            warehouse=os.environ['SNOWFLAKE_WAREHOUSE'],
-            database=os.environ['SNOWFLAKE_DATABASE'],
-            schema=os.environ['SNOWFLAKE_SCHEMA']
-        )
-        cur = conn.cursor()
+# 기존 데이터 전체 삭제
+cur.execute("TRUNCATE TABLE onbid_results")
 
-        # CSV 파일 업로드 및 COPY INTO 실행
-        files = glob.glob("data/*.csv")
-        for file in files:
-            file_path = os.path.abspath(file)
-            file_name = os.path.basename(file)
-            print(f"Uploading file: {file_name}")
+# CSV 파일 업로드 및 COPY
+files = glob.glob("data/*.csv")
+for file in files:
+    file_path = os.path.abspath(file)
+    file_name = os.path.basename(file)
+    print(f"Uploading: {file_name}")
 
-            cur.execute(f"PUT file://{file_path} {os.environ['SNOWFLAKE_STAGE']} OVERWRITE=TRUE")
-            cur.execute(f"""
-                COPY INTO onbid_results
-                FROM {os.environ['SNOWFLAKE_STAGE']}/{file_name}
-                FILE_FORMAT = (FORMAT_NAME = 'korean_csv_format')
-            """)
+    # Snowflake Stage로 PUT
+    cur.execute(f"PUT file://{file_path} {os.environ['SNOWFLAKE_STAGE']} OVERWRITE=TRUE")
 
-        print("✅ Upload and COPY INTO completed successfully.")
+    # COPY INTO
+    cur.execute(f"""
+        COPY INTO onbid_results
+        FROM {os.environ['SNOWFLAKE_STAGE']}/{file_name}
+        FILE_FORMAT = (FORMAT_NAME = 'korean_csv_format')
+    """)
 
-        cur.close()
-        conn.close()
-        EOF
+print("✅ 업로드 완료")
+cur.close()
+conn.close()
+EOF
