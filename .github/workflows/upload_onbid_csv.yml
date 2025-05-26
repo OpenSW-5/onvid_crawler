@@ -31,42 +31,38 @@ jobs:
         SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
         SNOWFLAKE_STAGE: ${{ secrets.SNOWFLAKE_STAGE }}
       run: |
-        python <<EOF
-import os, glob
-import snowflake.connector
+        python3 - <<EOF
+        import os, glob
+        import snowflake.connector
 
-# 연결
-conn = snowflake.connector.connect(
-    user=os.environ['SNOWFLAKE_USER'],
-    password=os.environ['SNOWFLAKE_PASSWORD'],
-    account=os.environ['SNOWFLAKE_ACCOUNT'],
-    warehouse=os.environ['SNOWFLAKE_WAREHOUSE'],
-    database=os.environ['SNOWFLAKE_DATABASE'],
-    schema=os.environ['SNOWFLAKE_SCHEMA']
-)
-cur = conn.cursor()
+        conn = snowflake.connector.connect(
+            user=os.environ['SNOWFLAKE_USER'],
+            password=os.environ['SNOWFLAKE_PASSWORD'],
+            account=os.environ['SNOWFLAKE_ACCOUNT'],
+            warehouse=os.environ['SNOWFLAKE_WAREHOUSE'],
+            database=os.environ['SNOWFLAKE_DATABASE'],
+            schema=os.environ['SNOWFLAKE_SCHEMA']
+        )
+        cur = conn.cursor()
 
-# 기존 데이터 전체 삭제
-cur.execute("TRUNCATE TABLE onbid_results")
+        # 기존 데이터 삭제
+        cur.execute("TRUNCATE TABLE onbid_results")
 
-# CSV 파일 업로드 및 COPY
-files = glob.glob("data/*.csv")
-for file in files:
-    file_path = os.path.abspath(file)
-    file_name = os.path.basename(file)
-    print(f"Uploading: {file_name}")
+        # CSV 업로드 및 COPY
+        files = glob.glob("data/*.csv")
+        for file in files:
+            file_path = os.path.abspath(file)
+            file_name = os.path.basename(file)
+            print(f"Uploading: {file_name}")
 
-    # Snowflake Stage로 PUT
-    cur.execute(f"PUT file://{file_path} {os.environ['SNOWFLAKE_STAGE']} OVERWRITE=TRUE")
+            cur.execute(f"PUT file://{file_path} {os.environ['SNOWFLAKE_STAGE']} OVERWRITE=TRUE")
 
-    # COPY INTO
-    cur.execute(f"""
-        COPY INTO onbid_results
-        FROM {os.environ['SNOWFLAKE_STAGE']}/{file_name}
-        FILE_FORMAT = (FORMAT_NAME = 'korean_csv_format')
-    """)
+            cur.execute(f"""
+                COPY INTO onbid_results
+                FROM {os.environ['SNOWFLAKE_STAGE']}/{file_name}
+                FILE_FORMAT = (FORMAT_NAME = 'korean_csv_format')
+            """)
 
-print("✅ 업로드 완료")
-cur.close()
-conn.close()
-EOF
+        cur.close()
+        conn.close()
+        EOF
